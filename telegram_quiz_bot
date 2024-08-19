@@ -1,0 +1,95 @@
+import logging
+from telegram import Update
+from telegram.ext import MessageHandler, Filters, CallbackContext, Updater, CommandHandler
+import re
+
+# Enable logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+api_t = "your_token_here"
+
+# Function to create and send a quiz from the received message
+def create_quiz(update: Update, context: CallbackContext) -> None:
+    message_text = update.message.text
+    logger.info(f"Received message: {message_text}")
+    
+    questions = parse_mcq(message_text)
+    
+    if not questions:
+        logger.warning("No questions parsed from the message.")
+        update.message.reply_text("Could not find any valid MCQ format in your message.")
+        return
+
+    for question in questions:
+        correct_option_id = question["correct_option_id"]
+        try:
+            context.bot.send_poll(
+                chat_id=update.effective_chat.id,
+                question=question["question"],
+                options=question["options"],
+                type='quiz',  # Specify that this is a quiz
+                correct_option_id=correct_option_id,  # Set the correct answer
+                is_anonymous=True,
+                allows_multiple_answers=False
+            )
+            logger.info(f"Quiz created: {question['question']}")
+        except Exception as e:
+            logger.error(f"Failed to send quiz: {e}")
+            update.message.reply_text("Failed to create quiz due to an error.")
+
+# Function to parse the MCQs from the message text
+def parse_mcq(text: str):
+    mcqs = []
+    
+    # Regular expression pattern to match MCQs
+    pattern = re.compile(r'(Q\.\s?\d+)\)\s*(.*?)\n((?:[a-d]\).*?(\n|$))+)', re.DOTALL)
+    matches = pattern.findall(text)
+
+    for match in matches:
+        question_number = match[0]
+        question_text = match[1].strip()
+        options_text = match[2].strip()
+
+        options = []
+        correct_option_id = None
+
+        for index, option_line in enumerate(options_text.splitlines()):
+            option_line = option_line.strip()
+            if re.match(r'^[a-d]\)', option_line):
+                if option_line.endswith('*'):
+                    option_line = option_line[:-1].strip()  # Remove the asterisk for the option text
+                    correct_option_id = index  # Store the index of the correct option
+                options.append(option_line)
+
+        if options and correct_option_id is not None:
+            mcqs.append({
+                "question": f"{question_number}) {question_text}",
+                "options": options,
+                "correct_option_id": correct_option_id
+            })
+
+    return mcqs
+
+# Function to start the bot
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text('Welcome! Paste your MCQs here, and I will generate quizzes for you.')
+
+# Main function to run the bot
+def main():
+    updater = Updater(api_t)
+    dispatcher = updater.dispatcher
+
+    # Register message handler for text messages
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, create_quiz))
+    dispatcher.add_handler(CommandHandler("start", start))
+
+    # Start the bot
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
